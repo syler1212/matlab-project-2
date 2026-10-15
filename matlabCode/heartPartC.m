@@ -171,7 +171,7 @@ xlim([0, end_time]);
 ylim([0, 1.5]);
 xlabel('Time (minutes)', 'FontWeight', 'bold');
 ylabel('Activity / Concentration', 'FontWeight', 'bold');
-title('Neural Drive vs. Adrenal Epinephrine Dynamics (Project 1c, \theta = 0^\circ, v_{max} = 7.0 m/s)', 'FontSize', 12);
+title('Neural Drive vs. Adrenal Epinephrine Dynamics', 'FontSize', 12);
 legend('Location', 'northeast');
 
 % Subplot 2: Dynamic Heart Rate Over Time
