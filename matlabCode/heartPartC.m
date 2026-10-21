@@ -24,7 +24,7 @@ t_accel_start  = 6.0;              % Sprint acceleration begins
 t_accel_end    = t_accel_start + duration_accel; % Sprint acceleration ends
 t_decel1_start = 18.25;             % Sprint ends, decel to Base_Velocity begins
 t_decel1_end   = t_decel1_start + duration_accel; % Reaches Base_Velocity
-t_cooldown_end = 15.0;             % Jog/cooldown ends, decel to rest begins
+t_cooldown_end = 22.0;             % Jog/cooldown ends, decel to rest begins
 t_decel2_end   = t_cooldown_end + duration_accel; % Fully stopped
 
 %% 2. VO2 Conversions
@@ -45,7 +45,7 @@ half_life_epinephrine = 2.5;                            % Half-life in blood (mi
 clearance_rate_constant = log(2) / half_life_epinephrine; % k (1/min) 
 
 %% 4. Time Setup
-dt = 0.001;                          % Step size (minutes, 0.06 s for smooth ramps)
+dt = 0.00001;                          % Step size (minutes, 0.06 s for smooth ramps)
 end_time = 30;                       % Total simulation time (minutes)
 time = 0:dt:end_time;
 N = length(time);
@@ -156,11 +156,10 @@ for i = 1:N
     heart_rate_vector(i) = heart_rate;
 end
 
-%% 6. Plotting Part 1.c Dynamic Results
-figure('Color', 'w', 'Position', [120, 120, 950, 700]);
+%% 6. Plotting Part 1.c Dynamic Results (Native MATLAB Tabs)
 
-% Subplot 1: Dynamic Drive & Hormonal Concentration
-subplot(2, 1, 1);
+% Tab 1
+figure('WindowStyle', 'docked', 'Name', 'Neural & Epinephrine Dynamics');
 plot(time, sympathetic_stimulation_vector, 'b-', 'LineWidth', 2, 'DisplayName', 'Sympathetic Stimulation (S)');
 hold on;
 plot(time, epinephrine_stock, 'r-', 'LineWidth', 2.2, 'DisplayName', 'Epinephrine Stock [Conc]');
@@ -174,8 +173,8 @@ ylabel('Activity / Concentration', 'FontWeight', 'bold');
 title('Neural Drive vs. Adrenal Epinephrine Dynamics', 'FontSize', 12);
 legend('Location', 'northeast');
 
-% Subplot 2: Dynamic Heart Rate Over Time
-subplot(2, 1, 2);
+% Tab 2
+figure('WindowStyle', 'docked', 'Name', 'Heart Rate Regulation');
 plot(time, heart_rate_vector, 'k-', 'LineWidth', 2.2, 'DisplayName', 'Heart Rate');
 hold on;
 yline(HR_max, 'r--', 'LineWidth', 1.2, 'DisplayName', 'Max Physiological Ceiling (220 bpm)');
