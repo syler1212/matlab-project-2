@@ -45,8 +45,8 @@ HR_max = 220;                         % Physiological ceiling (bpm)
 half_life_epinephrine = 2.5;                            % Half-life in blood (min)
 clearance_rate_constant = log(2) / half_life_epinephrine; % First-order decay k (1/min)
 
-StrokeVolume_base = 70;              % Baseline resting SV (mL)[cite: 1]
-EndSystolicVolume = 60;              % Post-beat residual reserve (mL)[cite: 1]
+StrokeVolume_base = 70;              % Baseline resting SV (mL)
+EndSystolicVolume_base = 60;         % Post-beat residual reserve (mL)
 EndDiastolicVolume_base = 130;       % Resting filled volume (mL)
 DeltaEndDiastolicVolume_max = 25;    % Max Frank-Starling stretch during exertion (mL)
 EjectionFraction_base = StrokeVolume_base / EndDiastolicVolume_base;
@@ -57,7 +57,7 @@ K_sympathetic_sensitivity = (EjectionFraction_max - EjectionFraction_base) * 0.8
 K_sympathetic_sensitivity_epinephrine = (EjectionFraction_max - EjectionFraction_base) * 0.20;
 
 elapsed_beat_time = 0;               % Accumulator for beat phase
-TotalBloodVolume = 5000;             % Total systemic blood volume (mL)[cite: 1]
+TotalBloodVolume = 5000;             % Total systemic blood volume (mL)
 
 %% 4. Time Setup
 dt = 0.00001;                        % Simulation step (minutes)
@@ -77,9 +77,11 @@ StrokeVolume = zeros(1, N);             % mL
 CardiacOutput_continuous = zeros(1, N); % mL/min
 CardiacOutput_pulsatile = zeros(1, N);  % mL/min
 Flow = zeros(1, N);
-ventricle_volume = zeros(1, N);         % Left ventricle blood stock (mL)
+ventricle_volume = zeros(1, N);
+EndSystolicVolume = zeros(1, N);
 
-ventricle_volume(1) = EndSystolicVolume; % Start post-beat at 60 mL[cite: 1]
+ventricle_volume(1) = EndSystolicVolume_base; % Start post-beat at 60 mL
+EndSystolicVolume(1) = EndSystolicVolume_base;
 
 %% 5. Simulation Loop (Euler Integration)
 for i = 1:N
@@ -125,8 +127,9 @@ for i = 1:N
     VO2_L_min = (power_metabolic / caloric_equivalent) * 60;
     VO2_rel = (VO2_L_min * 1000) / mass_runner;
     
-    % Normalized sympathetic drive S (0 to 1)
-    sympathetic_stimulation = (VO2_rel - VO2_rel_rest) / (VO2_rel_max - VO2_rel_rest);
+    % Normalized sympathetic drive S (clamped between 0 and 1)
+    sympathetic_raw = (VO2_rel - VO2_rel_rest) / (VO2_rel_max - VO2_rel_rest);
+    sympathetic_stimulation = min(max(sympathetic_raw, 0.0), 1.0);
     sympathetic_stimulation_vector(i) = sympathetic_stimulation;
     
     % Adrenal epinephrine release kicks in past 50% exertion
@@ -137,6 +140,7 @@ for i = 1:N
     else
         inflow_rate = 0.14 + 0.14 * ((sympathetic_stimulation - 0.75) / 0.25);
     end
+    inflow_rate = max(0.0, inflow_rate); % Clamp non-negative
     inflow_rate_vector(i) = inflow_rate;
     
     % Epinephrine first-order clearance
@@ -144,40 +148,45 @@ for i = 1:N
     
     if i < N
         d_epinephrine_dt = inflow_rate - outflow_rate;
-        epinephrine_stock(i+1) = max(0, epinephrine_stock(i) + d_epinephrine_dt * dt);
+        epinephrine_stock(i+1) = max(0.0, epinephrine_stock(i) + d_epinephrine_dt * dt); % Clamp non-negative
     end
     
-    % Vagal withdrawal as exertion increases
-    parasympathetic_inhibition = parasympathetic_inhibition_rest * max(0, 1 - (sympathetic_stimulation / 0.4));
+    % Vagal withdrawal as exertion increases (clamped >= 0)
+    parasympathetic_inhibition = parasympathetic_inhibition_rest * (1 - (sympathetic_stimulation / 0.4));
+    parasympathetic_inhibition = max(0.0, parasympathetic_inhibition);
     
-    % Heart rate from combined neural and hormonal controls
-    heart_rate = intrinsic_rate + ...
-                 (sympathetic_sensitivity * sympathetic_stimulation) + ...
-                 (epinephrine_sensitivity * epinephrine_stock(i)) - ...
-                 parasympathetic_inhibition;
-    heart_rate_vector(i) = min(heart_rate, HR_max);
+    % Heart rate from combined neural and hormonal controls (clamped between rest and HR_max)
+    heart_rate_raw = intrinsic_rate + ...
+                     (sympathetic_sensitivity * sympathetic_stimulation) + ...
+                     (epinephrine_sensitivity * epinephrine_stock(i)) - ...
+                     parasympathetic_inhibition;
+    heart_rate = min(max(heart_rate_raw, heartRate_base), HR_max);
+    heart_rate_vector(i) = heart_rate;
 
-    % Ejection fraction increases with inotropic drive
-    EjectionFraction(i) = EjectionFraction_base + ...
-                          (K_sympathetic_sensitivity * sympathetic_stimulation) + ...
-                          (K_sympathetic_sensitivity_epinephrine * epinephrine_stock(i));
+    % Ejection fraction increases with inotropic drive (clamped between base and max)
+    EF_raw = EjectionFraction_base + ...
+             (K_sympathetic_sensitivity * sympathetic_stimulation) + ...
+             (K_sympathetic_sensitivity_epinephrine * epinephrine_stock(i));
+    EjectionFraction(i) = min(max(EF_raw, EjectionFraction_base), EjectionFraction_max);
 
-    % Frank-Starling EDV expansion
-    EndDiastolicVolume(i) = EndDiastolicVolume_base + ...
-                            (DeltaEndDiastolicVolume_max * sympathetic_stimulation);
+    % Frank-Starling EDV expansion (clamped between base and max EDV)
+    EDV_max = EndDiastolicVolume_base + DeltaEndDiastolicVolume_max;
+    EDV_raw = EndDiastolicVolume_base + (DeltaEndDiastolicVolume_max * sympathetic_stimulation);
+    EndDiastolicVolume(i) = min(max(EDV_raw, EndDiastolicVolume_base), EDV_max);
 
     StrokeVolume(i) = EjectionFraction(i) * EndDiastolicVolume(i);
+    EndSystolicVolume(i) = EndDiastolicVolume(i) * (1 - EjectionFraction(i));
 
-    % Version 1: Continuous mean cardiac output[cite: 1]
+    % Version 1: Continuous mean cardiac output
     CardiacOutput_continuous(i) = StrokeVolume(i) * heart_rate_vector(i);
 
-    % Version 2: Discrete pulsatile outflow[cite: 1]
+    % Version 2: Discrete pulsatile outflow
     T_beat = 1.0 / heart_rate_vector(i); % Cycle period in minutes
     elapsed_beat_time = elapsed_beat_time + dt;
 
     if elapsed_beat_time >= T_beat
-        % Eject accumulated volume down to the 60 mL ESV reserve[cite: 1]
-        ejected_volume = max(0, ventricle_volume(i) - EndSystolicVolume);
+        % Eject volume down to dynamic EndSystolicVolume(i) (clamped non-negative)
+        ejected_volume = max(0.0, ventricle_volume(i) - EndSystolicVolume(i));
         Flow(i) = ejected_volume / dt; 
         elapsed_beat_time = elapsed_beat_time - T_beat; % Keep phase remainder
     else
@@ -185,12 +194,14 @@ for i = 1:N
     end
     CardiacOutput_pulsatile(i) = Flow(i);
 
-    % Ventricular stock Euler integration[cite: 1]
+    % Ventricular stock Euler integration
     if i < N
         % Venous inflow refills SV over beat period T_beat
         venous_return = StrokeVolume(i) * heart_rate_vector(i); 
-        ventricle_volume(i+1) = ventricle_volume(i) + ...
-                                (venous_return - CardiacOutput_pulsatile(i)) * dt;
+        ventricle_next = ventricle_volume(i) + ...
+                         (venous_return - CardiacOutput_pulsatile(i)) * dt;
+        % Guard against negative volume stock
+        ventricle_volume(i+1) = max(0.0, ventricle_next);
     end
 end
 
@@ -219,24 +230,25 @@ title('Heart Rate Regulation (0–30 min)');
 % Figure 3: Ventricular Capacities
 figure('Name', 'Ventricular Volumes', 'NumberTitle', 'off');
 plot(time, EndDiastolicVolume, 'b', 'LineWidth', 1.5); hold on;
-plot(time, StrokeVolume, 'g', 'LineWidth', 1.5);
+plot(time, StrokeVolume, 'g', 'LineWidth', 1.5); hold on;
+plot(time, EndSystolicVolume, 'r--', 'LineWidth', 1.5);
 xlim([0, end_time]);
 grid on;
 xlabel('Time (minutes)');
 ylabel('Volume (mL)');
-legend('End-Diastolic Volume (EDV)', 'Stroke Volume (SV)', 'Location', 'northwest');
-title('End-Diastolic and Stroke Volume (0–30 min)');
+legend('End-Diastolic Volume (EDV)', 'Stroke Volume (SV)', 'End-Systolic Volume (ESV)', 'Location', 'northwest');
+title('Ventricular Volumes (0–30 min)');
 
-% Figure 4: Version 1 Continuous Cardiac Output[cite: 1]
+% Figure 4: Version 1 Continuous Cardiac Output
 figure('Name', 'Continuous Cardiac Output', 'NumberTitle', 'off');
 plot(time, CardiacOutput_continuous / 1000, 'm', 'LineWidth', 1.5);
 xlim([0, end_time]);
 grid on;
 xlabel('Time (minutes)');
 ylabel('Cardiac Output (L/min)');
-title('Project 1.d: Continuous Mean Cardiac Output (0–30 min)');
+title('Continuous Mean Cardiac Output (0–30 min)');
 
-% Figure 5: Version 2 Discrete Stroke Volume Dump (Zoomed Transition)[cite: 1]
+% Figure 5: Version 2 Discrete Stroke Volume Dump (Zoomed Transition)
 figure('Name', 'Discrete Systolic Volume Dump', 'NumberTitle', 'off');
 stem(time, (CardiacOutput_pulsatile * dt), 'Color', [0.85 0.325 0.098], 'Marker', 'none', 'LineWidth', 1.8);
 xlim([6.0, 6.3]);
@@ -246,7 +258,7 @@ xlabel('Time (minutes)');
 ylabel('Volume Ejected (mL)');
 title('Discharged Stroke Volume per Beat (6.0–6.3 min Zoom)');
 
-% Figure 6: Version 2 Discrete Stroke Volume Dump (Full 30 min)[cite: 1]
+% Figure 6: Version 2 Discrete Stroke Volume Dump (Full 30 min)
 figure('Name', 'Discrete Systolic Volume Dump', 'NumberTitle', 'off');
 stem(time, (CardiacOutput_pulsatile * dt), 'Color', [0.85 0.325 0.098], 'Marker', 'none');
 xlim([0, end_time]);
@@ -256,20 +268,20 @@ xlabel('Time (minutes)');
 ylabel('Volume Ejected (mL)');
 title('Discharged Stroke Volume per Beat (30 min)');
 
-% Figure 7: Left Ventricle Stock (Full 30 min)[cite: 1]
+% Figure 7: Left Ventricle Stock (Full 30 min)
 figure('Name', 'Ventricular Blood Stock', 'NumberTitle', 'off');
 plot(time, ventricle_volume, 'Color', [0 0.447 0.741]);
 xlim([0, end_time]);
 grid on;
 xlabel('Time (minutes)');
 ylabel('Blood Volume (mL)');
-title('Project 1.d: Ventricular Stock Volume (0–30 min)');
+title('Ventricular Stock Volume (0–30 min)');
 
-% Figure 8: Left Ventricle Stock (Zoomed Sawtooth Filling/Emptying)[cite: 1]
+% Figure 8: Left Ventricle Stock (Zoomed Sawtooth Filling/Emptying)
 figure('Name', 'Ventricular Blood Stock', 'NumberTitle', 'off');
 plot(time, ventricle_volume, 'Color', [0 0.447 0.741], 'LineWidth', 1.8);
 xlim([6.0, 6.3]);
 grid on;
 xlabel('Time (minutes)');
 ylabel('Blood Volume (mL)');
-title('Project 1.d: Ventricular Stock Volume (6.0 to 6.3 min)');
+title('Ventricular Stock Volume (6.0 to 6.3 min)');
